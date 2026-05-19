@@ -37,9 +37,9 @@ def send_discord(title, link, post_id):
             "url": link,
             "description": "👽 **AWA Upcoming Giveaway Detected**",
             "color": 10181046,
-            "thumbnail": {
-                "url": "https://files.catbox.moe/qttqpy.png"
-            },
+            "image": {
+    "url": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/3768760/header.jpg"
+},
             "fields": [
                 {"name": "Status", "value": "Upcoming / Demo Board Leak", "inline": False},
                 {"name": "Post ID", "value": str(post_id), "inline": True},

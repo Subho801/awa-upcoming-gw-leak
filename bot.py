@@ -32,44 +32,62 @@ def send_discord(title, link, post_id):
 
     lower = title.lower()
 
-if "skin" in lower:
-    color = 0xff4d6d  # pink/red
+    if "skin" in lower:
+        color = 0xff4d6d
 
-elif "beta" in lower:
-    color = 0x5865F2  # blurple
+    elif "closed beta" in lower:
+        color = 0x3498db
 
-elif "closed beta" in lower:
-    color = 0x3498db  # blue
+    elif "beta" in lower:
+        color = 0x5865F2
 
-elif "key giveaway" in lower:
-    color = 0xf1c40f  # gold
+    elif "key giveaway" in lower:
+        color = 0xf1c40f
 
-else:
-    color = 0x9b59b6  # purple default
-    
-     payload = {
-    "embeds": [
-        {
-            "title": title,
-            "url": link,
-            "description": "👽 **AWA Upcoming Giveaway Detected**",
-            "color": color,
-            "image": {
-                "url": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/3768760/header.jpg"
-            },
-            "fields": [
-                {"name": "Status", "value": "Upcoming / Demo Board Leak", "inline": False},
-                {"name": "Post ID", "value": str(post_id), "inline": True},
-                {"name": "Source", "value": "[Open AWA Post](" + link + ")", "inline": True},
-            ],
-            "footer": {
-                "text": "Subho's AWA Upcoming GA Notifier",
-                "icon_url": "https://files.catbox.moe/qttqpy.png"
-            },
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    ]
-}
+    else:
+        color = 0x9b59b6
+
+    payload = {
+        "embeds": [
+            {
+                "title": title,
+                "url": link,
+                "description": "🚨 **New AWA Leak Detected**",
+
+                "color": color,
+
+                "image": {
+                    "url": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/3768760/header.jpg"
+                },
+
+                "fields": [
+                    {
+                        "name": "Status",
+                        "value": "Upcoming / Demo Board Leak",
+                        "inline": False
+                    },
+                    {
+                        "name": "Post ID",
+                        "value": str(post_id),
+                        "inline": True
+                    },
+                    {
+                        "name": "Source",
+                        "value": "[Open AWA Post](" + link + ")",
+                        "inline": True
+                    }
+                ],
+
+                "footer": {
+                    "text": "Subho's AWA Upcoming GA Notifier",
+                    "icon_url": "https://files.catbox.moe/qttqpy.png"
+                },
+
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        ]
+    }
+
     r = requests.post(WEBHOOK_URL, json=payload, timeout=20)
     r.raise_for_status()
 

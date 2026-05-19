@@ -57,7 +57,7 @@ def send_discord(title, link, post_id):
                 "color": color,
 
                 "thumbnail": {
-                     "url": "https://upload.wikimedia.org/wikipedia/commons/e/e3/Alienware_Arena_logo.png"
+                     "url": "https://files.catbox.moe/fwq83q.jpg"
                 },
 
                 "fields": [

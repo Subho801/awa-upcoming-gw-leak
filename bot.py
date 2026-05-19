@@ -52,7 +52,7 @@ def send_discord(title, link, post_id):
             {
                 "title": title,
                 "url": link,
-                "description": "🚨 **New AWA Leak Detected**",
+                "description": "🛸 **New AWA Leak Detected**",
 
                 "color": color,
 

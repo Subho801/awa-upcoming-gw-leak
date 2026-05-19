@@ -57,8 +57,8 @@ def send_discord(title, link, post_id):
                 "color": color,
 
                 "image": {
-                    "url": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/3768760/header.jpg"
-                },
+                    "url": "https://cdn.cloudflare.steamstatic.com/steam/apps/3768760/header.jpg"
+                 },
 
                 "fields": [
                     {

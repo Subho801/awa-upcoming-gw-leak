@@ -56,9 +56,9 @@ def send_discord(title, link, post_id):
 
                 "color": color,
 
-                "image": {
-                    "url": "https://cdn.cloudflare.steamstatic.com/steam/apps/3768760/header.jpg"
-                 },
+                "thumbnail": {
+                     "url": "https://upload.wikimedia.org/wikipedia/commons/e/e3/Alienware_Arena_logo.png"
+                },
 
                 "fields": [
                     {

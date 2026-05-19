@@ -30,13 +30,30 @@ def send_discord(title, link, post_id):
         print("DISCORD_WEBHOOK not set. Printing only.")
         return
 
-    payload = {
+    lower = title.lower()
+
+if "skin" in lower:
+    color = 0xff4d6d  # pink/red
+
+elif "beta" in lower:
+    color = 0x5865F2  # blurple
+
+elif "closed beta" in lower:
+    color = 0x3498db  # blue
+
+elif "key giveaway" in lower:
+    color = 0xf1c40f  # gold
+
+else:
+    color = 0x9b59b6  # purple default
+    
+     payload = {
     "embeds": [
         {
             "title": title,
             "url": link,
             "description": "👽 **AWA Upcoming Giveaway Detected**",
-            "color": 10181046,
+            "color": color,
             "image": {
                 "url": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/3768760/header.jpg"
             },

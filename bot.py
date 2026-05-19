@@ -2,6 +2,7 @@ import os
 import re
 import json
 import requests
+from datetime import datetime
 from bs4 import BeautifulSoup
 
 URL = "https://na.alienwarearena.com/forums/board/443/demo-items-remember-to-change-before-publish"
@@ -30,24 +31,28 @@ def send_discord(title, link, post_id):
         return
 
     payload = {
-        "embeds": [
-            {
-                "title": title,
-                "url": link,
-                "description": "👽 **AWA Upcoming Giveaway Detected**",
-                "color": 10181046,
-                "fields": [
-                    {"name": "Status", "value": "Upcoming / Demo Board Leak", "inline": False},
-                    {"name": "Post ID", "value": str(post_id), "inline": True},
-                    {"name": "Source", "value": "[Open AWA Post](" + link + ")", "inline": True},
-                ],
-                "footer": {
-                    "text": "Subho's AWA Upcoming GA Notifier"
-                }
-            }
-        ]
-    }
-
+    "embeds": [
+        {
+            "title": title,
+            "url": link,
+            "description": "👽 **AWA Upcoming Giveaway Detected**",
+            "color": 10181046,
+            "thumbnail": {
+                "url": "https://files.catbox.moe/qttqpy.png"
+            },
+            "fields": [
+                {"name": "Status", "value": "Upcoming / Demo Board Leak", "inline": False},
+                {"name": "Post ID", "value": str(post_id), "inline": True},
+                {"name": "Source", "value": "[Open AWA Post](" + link + ")", "inline": True},
+            ],
+            "footer": {
+                "text": "Subho's AWA Upcoming GA Notifier",
+                "icon_url": "https://files.catbox.moe/qttqpy.png"
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    ]
+}
     r = requests.post(WEBHOOK_URL, json=payload, timeout=20)
     r.raise_for_status()
 

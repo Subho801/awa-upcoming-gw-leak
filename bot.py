@@ -5,20 +5,16 @@ import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
 
-URL = "https://na.alienwarearena.com/forums/board/443/demo-items-remember-to-change-before-publish"
+BOARD_URL = "https://na.alienwarearena.com/forums/board/443/demo-items-remember-to-change-before-publish"
+
 MIN_ID = 2174000
 SEEN_FILE = "seen.json"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 
-BASE_URL = "https://na.alienwarearena.com"
-
 headers = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/154.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/154.0.0.0 Safari/537.36"
 }
 
 
@@ -26,7 +22,6 @@ def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
             return set(json.load(f))
-
     return set()
 
 
@@ -35,370 +30,238 @@ def save_seen(seen):
         json.dump(sorted(list(seen)), f, indent=2)
 
 
-def normalize_link(link):
-    if link.startswith("/"):
-        return BASE_URL + link
-
-    return link
-
-
-def fetch_post_details(link):
+def fetch_requirements(link):
     """
-    Open the individual AWA post and attempt to extract:
+    Fetch the individual AWA giveaway page and extract
+    ARP/Tier information from its HTML metadata.
 
-    - ARP Tier requirement
-    - ARP / bid requirement
-    - giveaway type
-    - country restrictions
+    The visible page may say:
+        YOU ARE NOT ALLOWED ACCESS TO THIS CONTENT
 
-    Returns a dictionary.
+    but the HTML metadata can still contain the giveaway description.
     """
-
-    result = {
-        "tier": None,
-        "arp": None,
-        "giveaway_type": None,
-        "country": None,
-    }
 
     try:
-        response = requests.get(
+        r = requests.get(
             link,
             headers=headers,
-            timeout=20
+            timeout=20,
+            allow_redirects=True
         )
 
-        response.raise_for_status()
+        print(f"  Details HTTP: {r.status_code}")
+        print(f"  Final URL: {r.url}")
 
-    except requests.RequestException as e:
-        print(f"Failed to fetch post {link}: {e}")
-        return result
+        soup = BeautifulSoup(r.text, "html.parser")
 
-    soup = BeautifulSoup(response.text, "html.parser")
+        # Collect descriptions from meta tags
+        descriptions = []
 
-    # ---------------------------------------------------------
-    # Convert page to clean text
-    # ---------------------------------------------------------
+        for meta in soup.find_all("meta"):
+            content = meta.get("content", "")
+            if not content:
+                continue
 
-    page_text = soup.get_text(
-        " ",
-        strip=True
-    )
+            name = (meta.get("name") or "").lower()
+            prop = (meta.get("property") or "").lower()
 
-    # Collapse excessive whitespace
-    page_text = re.sub(
-        r"\s+",
-        " ",
-        page_text
-    )
+            if (
+                name in ("description", "og:description")
+                or prop == "og:description"
+            ):
+                descriptions.append(content)
 
-    # ---------------------------------------------------------
-    # TIER REQUIREMENT
-    #
-    # Examples:
-    #   Tier 1+
-    #   Tier 2+
-    #   Tier 3+
-    #   ARP Tier 4
-    # ---------------------------------------------------------
+        # Also check JSON-LD descriptions
+        for script in soup.find_all(
+            "script",
+            {"type": "application/ld+json"}
+        ):
+            try:
+                data = json.loads(script.string or script.get_text())
 
-    tier_patterns = [
-        r"\bTier\s*(\d+)\s*\+",
-        r"\bARP\s*Tier\s*(\d+)\s*\+?",
-        r"\bTier\s*(\d+)\b",
-    ]
+                if isinstance(data, dict):
+                    desc = data.get("description")
+                    if desc:
+                        descriptions.append(str(desc))
 
-    for pattern in tier_patterns:
-        match = re.search(
-            pattern,
-            page_text,
-            re.IGNORECASE
-        )
+            except Exception:
+                pass
 
-        if match:
-            result["tier"] = f"Tier {match.group(1)}+"
-            break
+        # Remove duplicates while preserving order
+        descriptions = list(dict.fromkeys(descriptions))
 
-    # ---------------------------------------------------------
-    # ARP / BLIND AUCTION
-    #
-    # We DON'T assume that every number followed by ARP
-    # is an entry requirement.
-    #
-    # Look for wording around bids / requirements.
-    # ---------------------------------------------------------
+        combined_text = " ".join(descriptions)
 
-    arp_patterns = [
-        # "ARP bid: 250"
-        r"(?:ARP|Arp)\s*bid\s*[:\-]?\s*(\d[\d,]*)",
+        print("  Metadata:", combined_text[:500])
 
-        # "bid of 250 ARP"
-        r"bid\s*(?:of|:)?\s*(\d[\d,]*)\s*ARP",
+        # ---------------------------------------------------------
+        # ARP
+        # ---------------------------------------------------------
 
-        # "250 ARP bid"
-        r"(\d[\d,]*)\s*ARP\s*bid",
+        arp = None
 
-        # "minimum bid: 250 ARP"
-        r"minimum\s+bid\s*[:\-]?\s*(\d[\d,]*)\s*ARP",
+        arp_patterns = [
+            r"requires\s+redeeming\s+([\d,]+)\s*ARP",
+            r"redeeming\s+([\d,]+)\s*ARP",
+            r"requires\s+([\d,]+)\s*ARP",
+            r"([\d,]+)\s*ARP\s+to\s+claim",
+        ]
 
-        # "minimum 250 ARP"
-        r"minimum\s+(\d[\d,]*)\s*ARP",
-    ]
+        for pattern in arp_patterns:
+            match = re.search(
+                pattern,
+                combined_text,
+                re.IGNORECASE
+            )
 
-    for pattern in arp_patterns:
-        match = re.search(
-            pattern,
-            page_text,
-            re.IGNORECASE
-        )
+            if match:
+                arp = int(match.group(1).replace(",", ""))
+                break
 
-        if match:
-            result["arp"] = f"{match.group(1)} ARP"
-            break
+        # ---------------------------------------------------------
+        # TIER
+        # ---------------------------------------------------------
 
-    # ---------------------------------------------------------
-    # GIVEAWAY TYPE
-    # ---------------------------------------------------------
+        tier = None
 
-    if re.search(
-        r"Blind Auction",
-        page_text,
-        re.IGNORECASE
-    ):
-        result["giveaway_type"] = "Blind Auction"
+        tier_patterns = [
+            r"requires\s+(?:AWA\s+)?Tier\s*(\d+)\s*\+?",
+            r"Tier\s*(\d+)\s*\+\s*required",
+            r"Tier\s*Requirement\s*[:\-]?\s*(\d+)\s*\+?",
+            r"minimum\s+Tier\s*(\d+)",
+        ]
 
-    elif re.search(
-        r"Community Giveaway",
-        page_text,
-        re.IGNORECASE
-    ):
-        result["giveaway_type"] = "Community Giveaway"
+        for pattern in tier_patterns:
+            match = re.search(
+                pattern,
+                combined_text,
+                re.IGNORECASE
+            )
 
-    # ---------------------------------------------------------
-    # COUNTRY RESTRICTION
-    # ---------------------------------------------------------
+            if match:
+                tier = int(match.group(1))
+                break
 
-    country_patterns = [
-        r"Country Restrictions?\s*[:\-]?\s*(.{0,150})",
-        r"Countries?\s*[:\-]?\s*(.{0,150})",
-    ]
+        # If no explicit Tier requirement was found,
+        # don't confuse it with the user's own account tier.
+        if tier is None:
+            tier_display = "Not specified"
+        else:
+            tier_display = f"Tier {tier}+"
 
-    for pattern in country_patterns:
-        match = re.search(
-            pattern,
-            page_text,
-            re.IGNORECASE
-        )
+        if arp is None:
+            arp_display = "Not specified"
+        else:
+            arp_display = f"{arp:,} ARP"
 
-        if match:
-            country = match.group(1).strip()
+        print(f"  ARP: {arp_display}")
+        print(f"  Tier: {tier_display}")
 
-            # Prevent the value from becoming enormous
-            country = country[:150]
+        return {
+            "arp": arp_display,
+            "tier": tier_display
+        }
 
-            result["country"] = country
-            break
+    except Exception as e:
+        print(f"  Failed to fetch requirements: {e}")
 
-    print(
-        f"DETAILS | Tier={result['tier']} | "
-        f"ARP={result['arp']} | "
-        f"Type={result['giveaway_type']}"
-    )
-
-    return result
+        return {
+            "arp": "Not specified",
+            "tier": "Not specified"
+        }
 
 
-def send_discord(
-    title,
-    link,
-    post_id,
-    details
-):
-
+def send_discord(title, link, post_id, requirements):
     if not WEBHOOK_URL:
-        print(
-            "DISCORD_WEBHOOK not set. Printing only."
-        )
+        print("DISCORD_WEBHOOK not set. Printing only.")
         return
 
     lower = title.lower()
 
-    # ---------------------------------------------------------
-    # Embed colour
-    # ---------------------------------------------------------
-
     if "skin" in lower:
         color = 0xff4d6d
-
     elif "closed beta" in lower:
         color = 0x3498db
-
     elif "beta" in lower:
         color = 0x5865F2
-
     elif "key giveaway" in lower:
         color = 0xf1c40f
-
     else:
         color = 0x9b59b6
 
-    # ---------------------------------------------------------
-    # Requirements
-    # ---------------------------------------------------------
-
-    tier = details.get("tier") or "Not specified"
-
-    arp = details.get("arp") or "Not specified"
-
-    giveaway_type = (
-        details.get("giveaway_type")
-        or "Not specified"
-    )
-
-    # ---------------------------------------------------------
-    # Discord payload
-    # ---------------------------------------------------------
-
     payload = {
-        "embeds": [
-            {
-                "title": title,
-                "url": link,
-
-                "description": (
-                    "🛸 **New AWA Leak Detected**"
-                ),
-
-                "color": color,
-
-                "thumbnail": {
-                    "url": (
-                        "https://files.catbox.moe/fwq83q.jpg"
-                    )
+        "embeds": [{
+            "title": title,
+            "url": link,
+            "description": "🛸 **New AWA Leak Detected**",
+            "color": color,
+            "thumbnail": {
+                "url": "https://files.catbox.moe/fwq83q.jpg"
+            },
+            "fields": [
+                {
+                    "name": "🎟️ Tier Requirement",
+                    "value": requirements["tier"],
+                    "inline": True
                 },
-
-                "fields": [
-
-                    {
-                        "name": "Status",
-                        "value": (
-                            "Upcoming / Demo Board Leak"
-                        ),
-                        "inline": False
-                    },
-
-                    {
-                        "name": "Tier Requirement",
-                        "value": f"🏆 {tier}",
-                        "inline": True
-                    },
-
-                    {
-                        "name": "ARP / Bid",
-                        "value": f"💰 {arp}",
-                        "inline": True
-                    },
-
-                    {
-                        "name": "Giveaway Type",
-                        "value": f"🎁 {giveaway_type}",
-                        "inline": True
-                    },
-
-                    {
-                        "name": "Post ID",
-                        "value": str(post_id),
-                        "inline": True
-                    },
-
-                    {
-                        "name": "Source",
-                        "value": (
-                            "[Open AWA Post]("
-                            + link
-                            + ")"
-                        ),
-                        "inline": True
-                    },
-                ],
-
-                "footer": {
-                    "text": (
-                        "Subho's AWA Upcoming GA Notifier"
-                    ),
-                    "icon_url": (
-                        "https://files.catbox.moe/qttqpy.png"
-                    )
+                {
+                    "name": "💰 ARP Requirement",
+                    "value": requirements["arp"],
+                    "inline": True
                 },
-
-                "timestamp": (
-                    datetime.utcnow().isoformat()
-                )
-            }
-        ]
+                {
+                    "name": "Status",
+                    "value": "Upcoming / Demo Board Leak",
+                    "inline": False
+                },
+                {
+                    "name": "Post ID",
+                    "value": str(post_id),
+                    "inline": True
+                },
+                {
+                    "name": "Source",
+                    "value": f"[Open AWA Post]({link})",
+                    "inline": True
+                }
+            ],
+            "footer": {
+                "text": "Subho's AWA Upcoming GA Notifier",
+                "icon_url": "https://files.catbox.moe/qttqpy.png"
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }]
     }
 
-    try:
-        r = requests.post(
-            WEBHOOK_URL,
-            json=payload,
-            timeout=20
-        )
+    r = requests.post(
+        WEBHOOK_URL,
+        json=payload,
+        timeout=20
+    )
 
-        r.raise_for_status()
-
-    except requests.RequestException as e:
-        print(
-            f"Discord webhook failed: {e}"
-        )
+    r.raise_for_status()
 
 
 def main():
-
     seen = load_seen()
 
-    # ---------------------------------------------------------
-    # Fetch demo board
-    # ---------------------------------------------------------
+    print("Fetching AWA Demo Board...")
 
-    try:
-        response = requests.get(
-            URL,
-            headers=headers,
-            timeout=20
-        )
-
-        response.raise_for_status()
-
-    except requests.RequestException as e:
-        print(
-            f"Failed to fetch AWA demo board: {e}"
-        )
-        return
-
-    html = response.text
-
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
+    r = requests.get(
+        BOARD_URL,
+        headers=headers,
+        timeout=20
     )
+
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "html.parser")
 
     found_new = False
 
-    # ---------------------------------------------------------
-    # Find posts
-    # ---------------------------------------------------------
+    for a in soup.find_all("a", href=True):
 
-    for a in soup.find_all(
-        "a",
-        href=True
-    ):
-
-        text = a.get_text(
-            " ",
-            strip=True
-        )
-
+        text = a.get_text(" ", strip=True)
         link = a["href"]
 
         if "/ucf/show/" not in link:
@@ -412,92 +275,50 @@ def main():
         if not match:
             continue
 
-        post_id = int(
-            match.group(1)
-        )
+        post_id = int(match.group(1))
 
         if post_id < MIN_ID:
             continue
 
         lower = text.lower()
 
-        if (
-            "giveaway" not in lower
-            and "key" not in lower
-        ):
+        if "giveaway" not in lower and "key" not in lower:
             continue
 
-        link = normalize_link(link)
+        if link.startswith("/"):
+            link = "https://na.alienwarearena.com" + link
 
-        unique_key = (
-            f"{post_id}:{text}"
-        )
+        unique_key = f"{post_id}:{text}"
 
         if unique_key in seen:
             continue
 
-        # -----------------------------------------------------
-        # New post detected
-        # -----------------------------------------------------
-
         print()
         print("=" * 60)
-        print("NEW AWA LEAK")
-        print("Title:", text)
-        print("Post ID:", post_id)
-        print("Link:", link)
-        print("=" * 60)
+        print("NEW:", text)
+        print("POST ID:", post_id)
+        print("LINK:", link)
 
-        # -----------------------------------------------------
-        # Fetch individual giveaway details
-        # -----------------------------------------------------
+        # Fetch ARP/Tier from individual page metadata
+        requirements = fetch_requirements(link)
 
-        details = fetch_post_details(
-            link
-        )
-
-        print(
-            "Tier:",
-            details["tier"]
-        )
-
-        print(
-            "ARP:",
-            details["arp"]
-        )
-
-        print(
-            "Type:",
-            details["giveaway_type"]
-        )
-
-        # -----------------------------------------------------
-        # Discord
-        # -----------------------------------------------------
+        print("ARP:", requirements["arp"])
+        print("TIER:", requirements["tier"])
 
         send_discord(
             text,
             link,
             post_id,
-            details
+            requirements
         )
 
-        # -----------------------------------------------------
-        # Mark as seen
-        # -----------------------------------------------------
-
-        seen.add(
-            unique_key
-        )
-
+        seen.add(unique_key)
         found_new = True
 
     save_seen(seen)
 
     if not found_new:
-        print(
-            "No new upcoming giveaways found."
-        )
+        print("No new upcoming giveaways found.")
 
 
 if __name__ == "__main__":

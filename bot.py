@@ -98,27 +98,105 @@ def similarity(a, b):
 
 def find_steam_image(title):
     """
-    Search Steam Store and return:
-        (steam_title, image_url)
+    Find the best Steam image.
 
-    Returns:
-        (None, None) if no suitable match is found.
+    Priority:
+    1. Exact giveaway/DLC/item match
+    2. Main/base game fallback
     """
 
-    cleaned = clean_game_title(title)
+    original_title = title.strip()
 
-    # Try cleaned title first, then original title.
+    # -----------------------------------------------------
+    # Build possible searches
+    # -----------------------------------------------------
+
+    cleaned = clean_game_title(original_title)
+
     queries = []
 
+    # First: exact cleaned giveaway title
     if cleaned:
         queries.append(cleaned)
 
-    if title not in queries:
-        queries.append(title)
+    # -----------------------------------------------------
+    # Try extracting the MAIN GAME name
+    # -----------------------------------------------------
 
-    for query in queries:
+    main_game = cleaned
 
-        print(f"STEAM SEARCH: {query}")
+    # Example:
+    # Dumb Ways to Build - Beach Breach Campaign
+    #                    ↓
+    # Dumb Ways to Build
+
+    if " - " in main_game:
+        possible_main = main_game.split(" - ")[0].strip()
+
+        if (
+            possible_main
+            and possible_main.lower() != main_game.lower()
+        ):
+            queries.append(possible_main)
+
+    # Remove common DLC/campaign/pack wording
+    fallback = re.sub(
+        r"\b("
+        r"campaign|"
+        r"starter\s*pack|"
+        r"starter|"
+        r"alpha|"
+        r"beta|"
+        r"demo|"
+        r"dlc|"
+        r"expansion|"
+        r"pack|"
+        r"bundle|"
+        r"edition|"
+        r"content"
+        r")\b",
+        "",
+        main_game,
+        flags=re.I
+    )
+
+    fallback = re.sub(
+        r"\s+",
+        " ",
+        fallback
+    ).strip(" -:")
+
+    if (
+        fallback
+        and fallback.lower() not in [
+            q.lower() for q in queries
+        ]
+    ):
+        queries.append(fallback)
+
+    # Original title as final search
+    if original_title.lower() not in [
+        q.lower() for q in queries
+    ]:
+        queries.append(original_title)
+
+    print()
+    print("STEAM SEARCH QUERIES:")
+
+    for q in queries:
+        print(f"  → {q}")
+
+    # -----------------------------------------------------
+    # Search Steam
+    # -----------------------------------------------------
+
+    for query_index, query in enumerate(queries):
+
+        print()
+        print(
+            f"STEAM SEARCH [{query_index + 1}/{len(queries)}]: "
+            f"{query}"
+        )
 
         url = (
             "https://store.steampowered.com/search/"
@@ -126,6 +204,7 @@ def find_steam_image(title):
         )
 
         try:
+
             response = requests.get(
                 url,
                 headers=HEADERS,
@@ -135,111 +214,191 @@ def find_steam_image(title):
             response.raise_for_status()
 
         except Exception as e:
-            print(f"Steam search failed: {e}")
+
+            print(
+                f"Steam search failed: {e}"
+            )
+
             continue
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
 
-        results = soup.select("a.search_result_row")
+        results = soup.select(
+            "a.search_result_row"
+        )
 
         if not results:
-            print("No Steam results.")
+
+            print(
+                "No Steam results."
+            )
+
             continue
 
         best_result = None
         best_score = 0
+        best_title = None
+        best_appid = None
+
+        # -------------------------------------------------
+        # Examine Steam results
+        # -------------------------------------------------
 
         for result in results[:10]:
 
-            steam_title = result.get_text(" ", strip=True)
+            title_element = result.select_one(
+                ".title"
+            )
+
+            if not title_element:
+                continue
+
+            steam_title = title_element.get_text(
+                " ",
+                strip=True
+            )
 
             if not steam_title:
                 continue
 
-            # Steam sometimes includes extra text like
-            # release date / price, so get the title element.
-            title_element = result.select_one(".title")
+            score = similarity(
+                query,
+                steam_title
+            )
 
-            if title_element:
-                steam_title = title_element.get_text(
-                    " ",
-                    strip=True
+            appid = result.get(
+                "data-ds-appid"
+            )
+
+            if appid:
+                appid = appid.split(",")[0].strip()
+
+            # Try URL if data-ds-appid missing
+            if not appid:
+
+                href = result.get(
+                    "href",
+                    ""
                 )
 
-            score = similarity(cleaned, steam_title)
+                match = re.search(
+                    r"/app/(\d+)",
+                    href
+                )
+
+                if match:
+                    appid = match.group(1)
 
             print(
-                f"  Steam candidate: {steam_title} "
-                f"(score={score:.2f})"
+                f"  {steam_title} "
+                f"| score={score:.2f} "
+                f"| appid={appid}"
             )
 
-            if score > best_score:
+            if (
+                appid
+                and score > best_score
+            ):
+
                 best_score = score
                 best_result = result
+                best_title = steam_title
+                best_appid = appid
+
+        # -------------------------------------------------
+        # No usable result
+        # -------------------------------------------------
 
         if not best_result:
+
             continue
 
-        steam_title_element = best_result.select_one(".title")
+        # -------------------------------------------------
+        # Determine required match strength
+        # -------------------------------------------------
 
-        if steam_title_element:
-            steam_title = steam_title_element.get_text(
-                " ",
-                strip=True
-            )
+        # First query = exact giveaway item.
+        #
+        # We require a stronger match here so something
+        # unrelated doesn't get selected.
+        if query_index == 0:
+
+            minimum_score = 0.55
+
         else:
-            steam_title = best_result.get_text(
-                " ",
-                strip=True
-            )
 
-        appid = best_result.get("data-ds-appid")
+            # Fallback main-game search can be slightly
+            # more flexible.
+            minimum_score = 0.40
 
-        # Steam can sometimes contain multiple IDs
-        if appid:
-            appid = appid.split(",")[0].strip()
+        if best_score < minimum_score:
 
-        if not appid:
-            # Try extracting from the URL
-            href = best_result.get("href", "")
-
-            match = re.search(
-                r"/app/(\d+)",
-                href
-            )
-
-            if match:
-                appid = match.group(1)
-
-        if not appid:
-            print("Steam result found but no AppID.")
-            continue
-
-        # Don't accept completely unrelated games.
-        # 0.35 gives some flexibility for DLC/campaign names.
-        if best_score < 0.35:
             print(
-                f"Steam match too weak: "
-                f"{steam_title} ({best_score:.2f})"
+                f"Match too weak: "
+                f"{best_title} "
+                f"({best_score:.2f} < {minimum_score:.2f})"
             )
+
             continue
+
+        # -------------------------------------------------
+        # Build Steam header image
+        # -------------------------------------------------
 
         image_url = (
-            f"https://cdn.akamai.steamstatic.com/"
-            f"steam/apps/{appid}/header.jpg"
+            "https://cdn.akamai.steamstatic.com/"
+            f"steam/apps/{best_appid}/header.jpg"
+        )
+
+        print()
+        print(
+            "STEAM MATCH FOUND!"
         )
 
         print(
-            f"STEAM MATCH: {steam_title} "
-            f"(AppID {appid})"
+            f"Title: {best_title}"
         )
 
-        print(f"STEAM IMAGE: {image_url}")
+        print(
+            f"AppID: {best_appid}"
+        )
 
-        return steam_title, image_url
+        print(
+            f"Score: {best_score:.2f}"
+        )
+
+        print(
+            f"Image: {image_url}"
+        )
+
+        # Tell us whether this was the exact item
+        # or fallback main game.
+        if query_index == 0:
+
+            print(
+                "MATCH TYPE: Exact / Direct match"
+            )
+
+        else:
+
+            print(
+                "MATCH TYPE: Main game fallback"
+            )
+
+        return best_title, image_url
+
+    # -----------------------------------------------------
+    # Nothing found
+    # -----------------------------------------------------
+
+    print(
+        "NO SUITABLE STEAM IMAGE FOUND."
+    )
 
     return None, None
-
 
 # =========================================================
 # AWA METADATA
